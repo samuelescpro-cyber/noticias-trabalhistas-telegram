@@ -13,6 +13,7 @@ TELEGRAM_CHAT_ID = "5361085564"
 RSS_FEEDS = [
     "https://www.conjur.com.br/rss/area/trabalhista",
     "https://www.migalhas.com.br/rss/trabalhista"
+    "https://www.olhardireto.com.br/"
 ]
 
 # ======================
