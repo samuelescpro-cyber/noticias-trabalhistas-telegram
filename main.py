@@ -7,8 +7,8 @@ import os
 # ======================
 # CONFIGURAÇÕES
 # ======================
-TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
-TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
+TELEGRAM_TOKEN = os.getenv("8317964744:AAHkHaY3b-qgU3MX0ELpf5nxnHEqDP0P9hY")
+TELEGRAM_CHAT_ID = os.getenv("5361085564")
 
 RSS_FEEDS = [
     "https://www.conjur.com.br/rss/area/trabalhista",
