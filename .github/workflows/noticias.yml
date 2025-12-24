@@ -2,7 +2,7 @@ name: Noticias Trabalhistas Telegram
 
 on:
   schedule:
-    - cron: '0 9 * * *'
+    - cron: '0 9 * * *'   # 06:00 BRT
   workflow_dispatch:
 
 jobs:
@@ -20,10 +20,19 @@ jobs:
 
       - name: Instalar dependências
         run: |
-          pip install requests feedparser beautifulsoup4
+          pip install requests beautifulsoup4 openai
 
       - name: Rodar script
         env:
           TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
         run: python main.py
+
+      - name: Salvar histórico
+        run: |
+          git config user.name "github-actions"
+          git config user.email "github-actions@github.com"
+          git add .github/enviadas.json
+          git commit -m "Atualiza histórico de notícias" || echo "Sem alterações"
+          git push
