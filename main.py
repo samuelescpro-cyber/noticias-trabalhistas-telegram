@@ -5,40 +5,56 @@ from bs4 import BeautifulSoup
 from datetime import datetime
 from openai import OpenAI
 
+# ======================
+# SECRETS
+# ======================
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
 TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 
-HIST_FILE = "enviadas.json"
+if not TELEGRAM_TOKEN or not TELEGRAM_CHAT_ID or not OPENAI_API_KEY:
+    raise Exception("Secrets obrigatórios não configurados")
+
+# ======================
+# CONFIG
+# ======================
+HIST_FILE = ".github/enviadas.json"
+
+HEADERS = {
+    "User-Agent": "Mozilla/5.0 (NoticiasTrabalhistasBot/1.0)"
+}
 
 SOURCES = {
-    "TRT23": "https://portal.trt23.jus.br/portal/noticias",
-    "G1_MT": "https://g1.globo.com/mt/mato-grosso/",
-    "OlharDireto": "https://www.olhardireto.com.br/",
-    "ReporterMT": "https://www.reportermt.com/",
-    "GazetaDigital": "https://www.gazetadigital.com.br/",
-    "FolhaMax": "https://www.folhamax.com/",
-    "EstadaoMT": "https://www.estadaomatogrosso.com.br"
+    "TRT-23": "https://portal.trt23.jus.br/portal/noticias",
+    "G1 MT": "https://g1.globo.com/mt/mato-grosso/",
+    "Olhar Direto": "https://www.olhardireto.com.br/",
+    "Reporter MT": "https://www.reportermt.com/",
+    "Gazeta Digital": "https://www.gazetadigital.com.br/",
+    "Folha Max": "https://www.folhamax.com/",
+    "Estadão MT": "https://www.estadaomatogrosso.com.br"
 }
 
 KEYWORDS = [
     "trabalhista", "trabalho", "empregado", "empregador",
-    "justiça do trabalho", "TRT", "TRT-23", "ação trabalhista",
-    "processo trabalhista", "verbas rescisórias", "CLT",
-    "horas extras", "FGTS", "rescisão", "assédio",
+    "justiça do trabalho", "trt", "trt-23",
+    "ação trabalhista", "processo trabalhista",
+    "verbas rescisórias", "clt", "horas extras",
+    "fgts", "rescisão", "assédio",
     "vínculo empregatício"
 ]
 
 client = OpenAI(api_key=OPENAI_API_KEY)
 
-# ------------------------
+# ======================
 def carregar_historico():
     if os.path.exists(HIST_FILE):
-        return json.load(open(HIST_FILE, "r", encoding="utf-8"))
+        with open(HIST_FILE, "r", encoding="utf-8") as f:
+            return json.load(f)
     return []
 
 def salvar_historico(data):
-    json.dump(data, open(HIST_FILE, "w", encoding="utf-8"), ensure_ascii=False, indent=2)
+    with open(HIST_FILE, "w", encoding="utf-8") as f:
+        json.dump(data, f, ensure_ascii=False, indent=2)
 
 def enviar_telegram(msg):
     requests.post(
@@ -51,10 +67,10 @@ def enviar_telegram(msg):
         }
     )
 
-# ------------------------
+# ======================
 def texto_relevante(texto):
-    texto_lower = texto.lower()
-    return any(k in texto_lower for k in KEYWORDS)
+    texto = texto.lower()
+    return any(k in texto for k in KEYWORDS)
 
 def resumo_juridico(texto):
     prompt = f"""
@@ -75,18 +91,20 @@ Texto:
     )
     return resp.choices[0].message.content.strip()
 
-# ------------------------
+# ======================
 def extrair_links(url):
-    html = requests.get(url, timeout=15).text
+    html = requests.get(url, headers=HEADERS, timeout=20).text
     soup = BeautifulSoup(html, "html.parser")
-    links = []
+    links = set()
+
     for a in soup.find_all("a", href=True):
         href = a["href"]
         if href.startswith("http"):
-            links.append(href)
-    return list(set(links))[:20]
+            links.add(href)
 
-# ------------------------
+    return list(links)[:20]
+
+# ======================
 def main():
     historico = carregar_historico()
     novos = []
@@ -105,13 +123,15 @@ def main():
                 continue
 
             try:
-                page = requests.get(link, timeout=15).text
+                page = requests.get(link, headers=HEADERS, timeout=20).text
                 texto = BeautifulSoup(page, "html.parser").get_text(" ", strip=True)
             except:
                 continue
 
             if not texto_relevante(texto):
                 continue
+
+            texto = texto[:4000]  # controle de custo
 
             resumo = resumo_juridico(texto)
 
