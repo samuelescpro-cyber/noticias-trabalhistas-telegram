@@ -1,65 +1,136 @@
+import os
+import json
 import requests
-import feedparser
 from bs4 import BeautifulSoup
 from datetime import datetime
+from openai import OpenAI
 
-# ======================
-# CONFIGURAÇÕES
-# ======================
-TELEGRAM_TOKEN = "8317964744:AAHkHaY3b-qgU3MX0ELpf5nxnHEqDP0P9hY"
-TELEGRAM_CHAT_ID = "5361085564"
+TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
+TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
+OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 
-# Fontes RSS (pode adicionar mais)
-RSS_FEEDS = [
-    "https://www.conjur.com.br/rss/area/trabalhista",
-    "https://www.migalhas.com.br/rss/trabalhista"
+HIST_FILE = "enviadas.json"
+
+SOURCES = {
+    "TRT23": "https://portal.trt23.jus.br/portal/noticias",
+    "G1_MT": "https://g1.globo.com/mt/mato-grosso/",
+    "OlharDireto": "https://www.olhardireto.com.br/",
+    "ReporterMT": "https://www.reportermt.com/",
+    "GazetaDigital": "https://www.gazetadigital.com.br/",
+    "FolhaMax": "https://www.folhamax.com/",
+    "EstadaoMT": "https://www.estadaomatogrosso.com.br"
+}
+
+KEYWORDS = [
+    "trabalhista", "trabalho", "empregado", "empregador",
+    "justiça do trabalho", "TRT", "TRT-23", "ação trabalhista",
+    "processo trabalhista", "verbas rescisórias", "CLT",
+    "horas extras", "FGTS", "rescisão", "assédio",
+    "vínculo empregatício"
 ]
 
-# ======================
-def enviar_telegram(mensagem):
-    url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
-    payload = {
-        "chat_id": TELEGRAM_CHAT_ID,
-        "text": mensagem,
-        "parse_mode": "HTML",
-        "disable_web_page_preview": True
-    }
-    requests.post(url, json=payload)
+client = OpenAI(api_key=OPENAI_API_KEY)
 
-# ======================
-def resumir_texto(html):
+# ------------------------
+def carregar_historico():
+    if os.path.exists(HIST_FILE):
+        return json.load(open(HIST_FILE, "r", encoding="utf-8"))
+    return []
+
+def salvar_historico(data):
+    json.dump(data, open(HIST_FILE, "w", encoding="utf-8"), ensure_ascii=False, indent=2)
+
+def enviar_telegram(msg):
+    requests.post(
+        f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage",
+        json={
+            "chat_id": TELEGRAM_CHAT_ID,
+            "text": msg,
+            "parse_mode": "HTML",
+            "disable_web_page_preview": True
+        }
+    )
+
+# ------------------------
+def texto_relevante(texto):
+    texto_lower = texto.lower()
+    return any(k in texto_lower for k in KEYWORDS)
+
+def resumo_juridico(texto):
+    prompt = f"""
+Você é um jornalista jurídico especializado em Direito do Trabalho.
+Analise o texto abaixo.
+
+1) Confirme se trata de processo, decisão ou ação trabalhista ocorrida no Estado de Mato Grosso.
+2) Se NÃO for, responda apenas: DESCARTAR
+3) Se for, gere um resumo jurídico jornalístico, técnico e objetivo (máx. 5 linhas).
+
+Texto:
+{texto}
+"""
+    resp = client.chat.completions.create(
+        model="gpt-4o-mini",
+        messages=[{"role": "user", "content": prompt}],
+        temperature=0.2
+    )
+    return resp.choices[0].message.content.strip()
+
+# ------------------------
+def extrair_links(url):
+    html = requests.get(url, timeout=15).text
     soup = BeautifulSoup(html, "html.parser")
-    texto = soup.get_text(separator=" ", strip=True)
-    return texto[:500] + "..." if len(texto) > 500 else texto
+    links = []
+    for a in soup.find_all("a", href=True):
+        href = a["href"]
+        if href.startswith("http"):
+            links.append(href)
+    return list(set(links))[:20]
 
-# ======================
+# ------------------------
 def main():
+    historico = carregar_historico()
+    novos = []
+
     hoje = datetime.now().strftime("%d/%m/%Y")
-    cabecalho = f"⚖️ <b>NOTÍCIAS TRABALHISTAS</b>\n📅 {hoje}\n\n"
-    mensagem_final = cabecalho
+    mensagem = f"⚖️ <b>JUSTIÇA DO TRABALHO – MT</b>\n📅 {hoje}\n\n"
 
-    for feed_url in RSS_FEEDS:
-        feed = feedparser.parse(feed_url)
+    for fonte, url in SOURCES.items():
+        try:
+            links = extrair_links(url)
+        except:
+            continue
 
-        for entry in feed.entries[:3]:
-            titulo = entry.title
-            link = entry.link
+        for link in links:
+            if link in historico:
+                continue
 
             try:
-                html = requests.get(link, timeout=10).text
-                resumo = resumir_texto(html)
+                page = requests.get(link, timeout=15).text
+                texto = BeautifulSoup(page, "html.parser").get_text(" ", strip=True)
             except:
-                resumo = "Não foi possível extrair o resumo."
+                continue
 
-            mensagem_final += (
-                f"📌 <b>{titulo}</b>\n\n"
-                f"📝 {resumo}\n\n"
+            if not texto_relevante(texto):
+                continue
+
+            resumo = resumo_juridico(texto)
+
+            if resumo == "DESCARTAR":
+                continue
+
+            mensagem += (
+                f"📌 <b>{fonte}</b>\n"
+                f"📝 {resumo}\n"
                 f"🔗 {link}\n\n"
                 "———————————————\n\n"
             )
 
-    enviar_telegram(mensagem_final)
+            novos.append(link)
 
-# ======================
+    if novos:
+        enviar_telegram(mensagem)
+        historico.extend(novos)
+        salvar_historico(historico)
+
 if __name__ == "__main__":
     main()
