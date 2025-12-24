@@ -5,8 +5,8 @@ from bs4 import BeautifulSoup
 from datetime import datetime
 from openai import OpenAI
 
-TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
-TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
+TELEGRAM_TOKEN = os.getenv("8317964744:AAHkHaY3b-qgU3MX0ELpf5nxnHEqDP0P9hY")
+TELEGRAM_CHAT_ID = os.getenv("5361085564")
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 
 HIST_FILE = "enviadas.json"
