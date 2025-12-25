@@ -76,14 +76,11 @@ def texto_relevante(texto):
     texto = texto.lower()
     return any(k in texto for k in KEYWORDS)
 
+
 def resumo_juridico(texto):
     prompt = f"""
-Você é um jornalista jurídico especializado em Direito do Trabalho.
-Analise o texto abaixo.
-
-1) Confirme se trata de processo, decisão ou ação trabalhista ocorrida no Estado de Mato Grosso.
-2) Se NÃO for, responda apenas: DESCARTAR
-3) Se for, gere um resumo jurídico jornalístico, técnico e objetivo (máx. 5 linhas).
+Você é um jornalista.
+Resuma o texto abaixo em até 3 linhas, de forma clara e objetiva.
 
 Texto:
 {texto}
@@ -91,9 +88,10 @@ Texto:
     resp = client.chat.completions.create(
         model="gpt-4o-mini",
         messages=[{"role": "user", "content": prompt}],
-        temperature=0.2
+        temperature=0.3
     )
     return resp.choices[0].message.content.strip()
+
 
 # ======================
 from urllib.parse import urljoin
