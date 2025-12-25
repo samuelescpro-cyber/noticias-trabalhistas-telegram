@@ -35,12 +35,16 @@ SOURCES = {
 }
 
 KEYWORDS = [
-    "trabalhista", "trabalho", "empregado", "empregador",
-    "justiça do trabalho", "trt", "trt-23",
-    "ação trabalhista", "processo trabalhista",
-    "verbas rescisórias", "clt", "horas extras",
-    "fgts", "rescisão", "assédio",
-    "vínculo empregatício"
+    # política
+    "governo", "prefeito", "deputado", "assembleia", "senado",
+    "política", "eleição", "campanha",
+
+    # crimes / polícia
+    "crime", "polícia", "prisão", "preso", "assassinato",
+    "homicídio", "furto", "roubo", "tráfico", "operação",
+
+    # geral (pra garantir)
+    "mt", "mato grosso"
 ]
 
 client = OpenAI(api_key=OPENAI_API_KEY)
