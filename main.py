@@ -96,17 +96,28 @@ Texto:
     return resp.choices[0].message.content.strip()
 
 # ======================
+from urllib.parse import urljoin
+
 def extrair_links(url):
     html = requests.get(url, headers=HEADERS, timeout=20).text
     soup = BeautifulSoup(html, "html.parser")
     links = set()
 
     for a in soup.find_all("a", href=True):
-        href = a["href"]
-        if href.startswith("http"):
-            links.add(href)
+        href = a["href"].strip()
 
-    return list(links)[:20]
+        # ignora âncoras e javascript
+        if href.startswith("#") or href.startswith("javascript"):
+            continue
+
+        # converte link relativo em absoluto
+        full_url = urljoin(url, href)
+
+        # filtro simples pra evitar lixo
+        if full_url.startswith("http"):
+            links.add(full_url)
+
+    return list(links)[:30]
 
 # ======================
 def main():
