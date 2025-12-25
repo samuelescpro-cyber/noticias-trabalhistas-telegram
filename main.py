@@ -2,6 +2,7 @@ import requests
 from bs4 import BeautifulSoup
 from datetime import datetime
 import os
+from urllib.parse import urljoin
 
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
 TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
@@ -10,7 +11,9 @@ HEADERS = {
     "User-Agent": "Mozilla/5.0"
 }
 
-URL = "https://g1.globo.com/mt/mato-grosso/"
+SITES = {
+    "G1 MT": "https://g1.globo.com/mt/mato-grosso/"
+}
 
 def enviar(msg):
     requests.post(
@@ -22,22 +25,37 @@ def enviar(msg):
         }
     )
 
-html = requests.get(URL, headers=HEADERS).text
-soup = BeautifulSoup(html, "html.parser")
+def coletar_noticias():
+    noticias = []
 
-links = []
-for a in soup.find_all("a", href=True):
-    href = a["href"]
-    if "/mt/" in href:
-        if href.startswith("http"):
-            links.append(href)
+    for fonte, url in SITES.items():
+        html = requests.get(url, headers=HEADERS, timeout=20).text
+        soup = BeautifulSoup(html, "html.parser")
 
-links = list(dict.fromkeys(links))[:5]
+        # seletor REAL do G1
+        for a in soup.select("a.feed-post-link"):
+            link = a.get("href")
+            titulo = a.get_text(strip=True)
 
-hoje = datetime.now().strftime("%d/%m/%Y")
-msg = f"🧪 TESTE G1 MT – {hoje}\n\n"
+            if link and titulo:
+                noticias.append((fonte, titulo, link))
 
-for l in links:
-    msg += f"{l}\n\n"
+    return noticias[:5]
 
-enviar(msg)
+def main():
+    noticias = coletar_noticias()
+
+    # 🚨 SE NÃO TEM NOTÍCIA, NÃO ENVIA NADA
+    if not noticias:
+        return
+
+    hoje = datetime.now().strftime("%d/%m/%Y")
+    msg = f"⚖️ NOTÍCIAS TRABALHISTAS\n📅 {hoje}\n\n"
+
+    for fonte, titulo, link in noticias:
+        msg += f"📌 {titulo}\n🔗 {link}\n\n"
+
+    enviar(msg)
+
+if __name__ == "__main__":
+    main()
