@@ -1,8 +1,6 @@
-name: Noticias Trabalhistas Telegram
+name: Telegram Notícias Trabalhistas
 
 on:
-  schedule:
-    - cron: '0 9 * * *'   # 06:00 BRT
   workflow_dispatch:
 
 jobs:
@@ -10,29 +8,19 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout código
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
-      - name: Configurar Python
-        uses: actions/setup-python@v5
+      - uses: actions/setup-python@v5
         with:
           python-version: '3.10'
 
       - name: Instalar dependências
         run: |
-          pip install requests beautifulsoup4 openai
+          pip install requests beautifulsoup4
 
-      - name: Rodar script
+      - name: Rodar bot
         env:
           TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
-          OPENAI_API_KEY: ${{ secrets.OPENAI_API_KEY }}
         run: python main.py
 
-      - name: Salvar histórico
-        run: |
-          git config user.name "github-actions"
-          git config user.email "github-actions@github.com"
-          git add .github/enviadas.json
-          git commit -m "Atualiza histórico de notícias" || echo "Sem alterações"
-          git push
