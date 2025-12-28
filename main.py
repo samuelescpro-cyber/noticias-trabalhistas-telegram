@@ -3,6 +3,7 @@ import json
 import time
 import re
 import html
+import unicodedata
 import requests
 from datetime import datetime
 from urllib.parse import urljoin, urlparse, parse_qs, urlencode, urlunparse
@@ -23,16 +24,12 @@ TIMEOUT = (7, 20)  # (conexão, leitura)
 SLEEP = float(os.getenv("SLEEP", "0.25"))
 
 MAX_LINKS_POR_FONTE = int(os.getenv("MAX_LINKS_POR_FONTE", "40"))
-MAX_PAGINAS_ANALISADAS = int(os.getenv("MAX_PAGINAS_ANALISADAS", "120"))
+MAX_PAGINAS_ANALISADAS = int(os.getenv("MAX_PAGINAS_ANALISADAS", "220"))
 
-MAX_RELEVANTES = int(os.getenv("MAX_RELEVANTES", "7"))
-MAX_OUTRAS = int(os.getenv("MAX_OUTRAS", "12"))
+MAX_RELEVANTES = int(os.getenv("MAX_RELEVANTES", "12"))
 
-# Se TRUE: mais rígido (exige score >= 2, exceto TRT23)
+# mais rígido
 STRICT_JT = os.getenv("STRICT_JT", "1") == "1"
-
-# Mostrar ou não a seção "OUTRAS (AINDA JT)"
-SHOW_OUTRAS = os.getenv("SHOW_OUTRAS", "1") == "1"
 
 if not TELEGRAM_TOKEN or not TELEGRAM_CHAT_ID:
     raise SystemExit("ERRO: Defina TELEGRAM_TOKEN e TELEGRAM_CHAT_ID no ambiente.")
@@ -43,36 +40,82 @@ HEADERS = {
 }
 
 # ======================
-# FONTES
+# FONTES (sem CNJ)
 # ======================
 SOURCES = [
-    # TRT23 (prioridade)
+    # TRT23
     "https://portal.trt23.jus.br/portal/noticias",
     "https://portal.trt23.jus.br/portal/noticias?page=1",
 
-    # Novas fontes pedidas
-    "https://lucasdorioverde.portaldacidade.com/",
-    "https://www.conjur.com.br/",
-    "https://cpanoticias.com/",
-    "https://www.cnj.jus.br/poder-judiciario/tribunais/tribunal-regional-do-trabalho-da-23a-regiao-trt23/",
-
-    # Portais MT / Jurídico (só entra se for JT)
+    # Portais (só entra se bater keywords)
     "https://g1.globo.com/mt/mato-grosso/",
     "https://www.olhardireto.com.br/",
     "https://www.olhardireto.com.br/juridico/",
     "https://www.reportermt.com/",
     "https://www.reportermt.com/ultimas-noticias",
-    "https://www.gazetadigital.com.br/",
     "https://www.gazetadigital.com.br/editorias/judiciario/",
     "https://www.folhamax.com/",
     "https://www.folhamax.com/cidades/",
-    "https://www.folhamax.com/politica/",
     "https://www.tjmt.jus.br/noticias",
     "https://www.estadaomatogrosso.com.br",
+
+    # Pedidas
+    "https://lucasdorioverde.portaldacidade.com/",
+    "https://www.conjur.com.br/",
+    "https://cpanoticias.com/",
 ]
 
 # ======================
-# FILTRO: SOMENTE JUSTIÇA DO TRABALHO
+# BLOQUEIOS (agressivo)
+# ======================
+BLOCKED_DOMAINS = {
+    "globoplay.globo.com",
+    "ge.globo.com",
+    "gshow.globo.com",
+    "valor.globo.com",
+    "oglobo.globo.com",
+    "extra.globo.com",
+    "cnj.jus.br",
+}
+
+BLOCKED_PATH_SNIPPETS = [
+    # mídia / landing
+    "/live/", "/ao-vivo/", "/aovivo/",
+    "/videos/", "/video/", "/player/",
+    "/podcasts/", "/podcast/",
+    "/programas/", "/apps/", "/app/",
+    "/tv/", "/radio/",
+    "/especiais/", "/especial/",
+    "/galeria/", "/fotos/", "/foto/",
+    "/tag/", "/tags/", "/topicos/", "/assunto/",
+    "/newsletter/", "/newsletters/",
+    "/login", "/cadastro", "/assinatura", "/subscribe",
+    "/privacidade", "/privacy", "/politica-de-privacidade",
+    "/termos", "/terms",
+    "/contato", "/fale-conosco", "/expediente", "/sobre",
+    "/institucional", "/quem-somos",
+
+    # TRT23 (menus/páginas institucionais que o crawler pega muito)
+    "/portal/menulistchildren/",
+    "/portal/o-trt",
+    "/portal/composicao-do-trt",
+    "/portal/corregedoria",
+    "/portal/ejud",
+    "/portal/foros-trabalhistas",
+    "/portal/gestao-estrategica",
+    "/portal/juizes-do-trabalho",
+    "/portal/memorial",
+    "/portal/pontos-de-inclusao-digital",
+    "/portal/programas-acoes-e-projetos",
+    "/portal/sustentabilidade",
+    "/portal/varas-do-trabalho",
+    "/portal/servicos",
+    "/portal/biblioteca",
+    "/portal/reports/",
+]
+
+# ======================
+# FILTRO: Justiça do Trabalho (base)
 # ======================
 JT_STRONG = [
     "justiça do trabalho", "justica do trabalho",
@@ -81,19 +124,7 @@ JT_STRONG = [
     "tst",
     "mpt", "ministério público do trabalho", "ministerio publico do trabalho",
     "clt",
-    "reclamação trabalhista", "reclamacao trabalhista",
-    "ação trabalhista", "acao trabalhista",
-    "processo trabalhista",
-    "empregado", "empregador",
-    "verbas rescisórias", "verbas rescisorias",
-    "fgts", "horas extras",
-    "rescisão", "rescisao",
-    "acordo trabalhista",
-    "convenção coletiva", "convencao coletiva",
     "dissídio", "dissidio",
-    "assédio", "assedio",
-    "insalubridade", "periculosidade",
-    "vínculo empregatício", "vinculo empregaticio",
 ]
 
 JT_WEAK = [
@@ -101,50 +132,100 @@ JT_WEAK = [
     "sindicato", "greve",
 ]
 
-def jt_score(title: str, text: str, url: str) -> int:
-    t = (title + " " + text).lower()
+# ======================
+# FILTRO: somente SEUS TERMOS (processo/decisão)
+# (normalizado: sem acento + lowercase)
+# ======================
+KEY_PHRASES = [
+    # exatamente do jeito que você pediu (com variações para plural/singular)
+    "processo trabalhista", "processos trabalhistas",
+    "acao trabalhista", "acoes trabalhistas",
+    "ação trabalhista", "ações trabalhistas",
+    "reclamacao trabalhista", "reclamacoes trabalhistas",
+    "reclamação trabalhista", "reclamações trabalhistas",
+    "decisao trabalhista", "decisoes trabalhistas",
+    "decisão trabalhista", "decisões trabalhistas",
+    "sentenca trabalhista", "sentencas trabalhistas",
+    "sentença trabalhista", "sentenças trabalhistas",
+    "condenacao trabalhista", "condenacoes trabalhistas",
+    "condenação trabalhista", "condenações trabalhistas",
+    "indenizacao trabalhista", "indenizacoes trabalhistas",
+    "indenização trabalhista", "indenizações trabalhistas",
+    "dano moral trabalhista", "danos morais trabalhistas",
+    "liminar", "tutela",
+    "acordao", "acórdão", "acordaos", "acórdãos",
+    "recurso", "recursos",
+    "agravo", "agravos",
+    "embargos trabalhistas", "embargo trabalhista",
+    "audiencia trabalhista", "audiencias trabalhistas",
+    "audiência trabalhista", "audiências trabalhistas",
+    "execucao de processo trabalhista", "execucoes de processos trabalhistas",
+    "execução de processo trabalhista", "execuções de processos trabalhistas",
+    "penhora de empresa", "penhoras de empresas",
+    "bloqueio de bens", "bloqueios de bens",
+    "acordo em processo trabalhista", "acordos em processos trabalhistas",
+    "homologacao", "homologacoes", "homologação", "homologações",
+    "cumprimento de sentenca", "cumprimento de sentencas",
+    "cumprimento de sentença", "cumprimento de sentenças",
+    "inquerito trabalhista", "inqueritos trabalhistas",
+    "inquérito trabalhista", "inquéritos trabalhistas",
+    "processo", "processos ",
+    "acao", "acoes",
+    "ação", "ações",
+    "reclamacao", "reclamacoes",
+    "reclamação", "reclamações",
+    "decisao", "decisoes",
+    "decisão", "decisões",
+    "sentenca", "sentencas",
+    "sentença", "sentenças",
+    "condenacao", "condenacoes",
+    "condenação", "condenações",
+    "indenizacao", "indenizacoes",
+    "indenização", "indenizações",
+    "embargos ", "embargo",
+    "audiencia", "audiencias",
+    "audiência", "audiências",
+    "execucao de processo", "execucoes de processos",
+    "execução de processo", "execuções de processos",
+    "cumprimento de sentenca trabalhista", "cumprimento de sentencas trabalhista",
+    "cumprimento de sentença trabalhista", "cumprimento de sentenças trabalhista",
+    "cumprimento de sentencas trabalhistas", "cumprimento de sentencas trabalhistas",
+    "cumprimento de sentenças trabalhistas", "cumprimento de sentenças trabalhista",
+]
+
+def norm(s: str) -> str:
+    s = s or ""
+    s = unicodedata.normalize("NFKD", s)
+    s = "".join(ch for ch in s if not unicodedata.combining(ch))
+    return s.lower()
+
+def jt_score(title: str, text: str) -> int:
+    t = norm(title + " " + text)
     score = 0
-
     for k in JT_STRONG:
-        if k in t:
+        if norm(k) in t:
             score += 2
-
     for k in JT_WEAK:
-        if k in t:
+        if norm(k) in t:
             score += 1
-
-    netloc = urlparse(url).netloc.lower()
-    if "trt23.jus.br" in netloc:
-        score += 4
-    elif "trt" in netloc:
-        score += 2
-
     return score
 
-def is_justica_do_trabalho(title: str, text: str, url: str) -> bool:
-    netloc = urlparse(url).netloc.lower()
-    if "trt23.jus.br" in netloc:
-        return True
+def has_required_keywords(title: str, text: str) -> bool:
+    t = norm(title + " " + text)
+    for ph in KEY_PHRASES:
+        if norm(ph) in t:
+            return True
+    return False
 
-    score = jt_score(title, text, url)
-    return score >= (2 if STRICT_JT else 1)
-
-def is_relevante_trt23(title: str, text: str, url: str) -> bool:
-    netloc = urlparse(url).netloc.lower()
-    if "trt23.jus.br" in netloc:
-        return True
-
-    if not is_justica_do_trabalho(title, text, url):
+def is_target_article(title: str, text: str) -> bool:
+    # 1) tem que bater keyword exata da sua lista
+    if not has_required_keywords(title, text):
         return False
-
-    t = (title + " " + text).lower()
-    sinais_mt_trt23 = [
-        "trt-23", "trt23", "trtmt",
-        "mato grosso", " mt ", "cuiab", "várzea", "varzea",
-        "rondonópolis", "rondonopolis",
-        "sinop", "sorriso", "primavera do leste",
-    ]
-    return any(s in t for s in sinais_mt_trt23)
+    # 2) ainda exige cheiro de Justiça do Trabalho
+    js = jt_score(title, text)
+    if STRICT_JT:
+        return js >= 2
+    return js >= 1
 
 # ======================
 # UTILIDADES
@@ -190,108 +271,63 @@ def chunk_telegram(msg: str, limit=3800):
         parts.append(buf)
     return parts
 
+def is_blocked_url(u: str) -> bool:
+    try:
+        p = urlparse(u)
+    except Exception:
+        return True
+
+    netloc = (p.netloc or "").lower()
+    full = ((p.path or "") + "?" + (p.query or "")).lower()
+
+    for bd in BLOCKED_DOMAINS:
+        bd = bd.lower()
+        if netloc == bd or netloc.endswith("." + bd):
+            return True
+
+    for snip in BLOCKED_PATH_SNIPPETS:
+        if snip.lower() in full:
+            return True
+
+    return False
+
 def good_url(u: str) -> bool:
+    if is_blocked_url(u):
+        return False
     bad_ext = (".jpg", ".jpeg", ".png", ".gif", ".webp", ".svg", ".css", ".js", ".pdf", ".mp4", ".mp3", ".zip")
     return not u.lower().endswith(bad_ext)
 
 def same_domain(base, u) -> bool:
-    b = urlparse(base).netloc.lower()
-    n = urlparse(u).netloc.lower()
+    b = (urlparse(base).netloc or "").lower()
+    n = (urlparse(u).netloc or "").lower()
     if not b or not n:
         return False
 
-    if b in n:
-        return True
-    if "globo.com" in b and "globo.com" in n:
-        return True
-    return False
+    # G1: só permite continuar no próprio g1
+    if "g1.globo.com" in b:
+        return "g1.globo.com" in n
+
+    return (n == b) or n.endswith("." + b)
 
 def clean_olhar_url(u: str) -> str:
-    # remove caractere estranho "¬" e tenta normalizar query
-    if not any(d in u for d in ("olhardireto.com.br", "olharjuridico.com.br", "olharconceito.com.br")):
+    if "olhardireto.com.br" not in u and "olharjuridico.com.br" not in u and "olharconceito.com.br" not in u:
         return u
 
     u = u.replace("¬", "")
     parsed = urlparse(u)
     qs = parse_qs(parsed.query, keep_blank_values=True)
 
-    # alguns links quebram "noticia" virando "icia"
     if "icia" in qs and "noticia" not in qs:
         qs["noticia"] = qs.pop("icia")
 
     new_query = urlencode(qs, doseq=True)
     return urlunparse((parsed.scheme, parsed.netloc, parsed.path, parsed.params, new_query, parsed.fragment))
 
-def normalize_url(u: str) -> str:
-    """Remove fragment + alguns trackers comuns pra dedupe melhor."""
-    parsed = urlparse(u)
-    qs = parse_qs(parsed.query, keep_blank_values=True)
-
-    drop_keys = {"utm_source", "utm_medium", "utm_campaign", "utm_term", "utm_content", "fbclid", "gclid"}
-    for k in list(qs.keys()):
-        if k in drop_keys:
-            qs.pop(k, None)
-
-    new_query = urlencode(qs, doseq=True)
-    return urlunparse((parsed.scheme, parsed.netloc, parsed.path, parsed.params, new_query, ""))
-
 def fetch(url: str) -> str:
-    # retry simples
-    last_err = None
-    for attempt in range(2):
-        try:
-            time.sleep(SLEEP)
-            r = requests.get(url, headers=HEADERS, timeout=TIMEOUT, allow_redirects=True)
-            r.raise_for_status()
-            return r.text
-        except Exception as e:
-            last_err = e
-            time.sleep(0.6 * (attempt + 1))
-    raise last_err
-
-def looks_like_article(source_url: str, u: str) -> bool:
-    """Heurística por site pra evitar páginas inúteis (menu/seções)."""
-    netloc = urlparse(u).netloc.lower()
-    path = urlparse(u).path.lower()
-
-    # TRT23: só pega notícias mesmo
-    if "portal.trt23.jus.br" in netloc:
-        return ("/portal/noticias/" in path) and ("menulistchildren" not in path) and ("page=" not in u)
-
-    # G1 MT: notícia .ghtml
-    if "g1.globo.com" in netloc:
-        return ("/noticia/" in path) and u.endswith(".ghtml")
-
-    # Olhar: exibir.asp com id (normalmente notícia)
-    if "olhardireto.com.br" in netloc or "olharjuridico.com.br" in netloc or "olharconceito.com.br" in netloc:
-        return ("exibir.asp" in path) and ("id=" in u)
-
-    # FolhaMax: geralmente tem número no final
-    if "folhamax.com" in netloc:
-        return bool(re.search(r"/\d{3,}$", path))
-
-    # Repórter MT: costuma ter /<categoria>/<slug>/<id>
-    if "reportermt.com" in netloc:
-        return bool(re.search(r"/\d{3,}$", path))
-
-    # Gazeta: costuma ter /.../123456
-    if "gazetadigital.com.br" in netloc:
-        return bool(re.search(r"/\d{3,}$", path))
-
-    # Estadao MT: /.../123456
-    if "estadaomatogrosso.com.br" in netloc:
-        return bool(re.search(r"/\d{3,}$", path))
-
-    # ConJur: costuma ser /YYYY/mm/dd/
-    if "conjur.com.br" in netloc:
-        return bool(re.search(r"/\d{4}/\d{2}/\d{2}/", path))
-
-    # Portal da Cidade: costuma ter /noticias/ ou /economia/ etc, mas artigo tem slug maior
-    if "portaldacidade.com" in netloc:
-        return len(path.strip("/").split("/")) >= 2
-
-    # CNJ: páginas institucionais (quase não terá notícia), deixa passar e o filtro JT decide
-    return True
+    time.sleep(SLEEP)
+    r = requests.get(url, headers=HEADERS, timeout=TIMEOUT, allow_redirects=True)
+    r.raise_for_status()
+    return r.text
 
 def extract_links(source_url: str):
     html_ = fetch(source_url)
@@ -305,18 +341,14 @@ def extract_links(source_url: str):
 
         u = urljoin(source_url, href).split("#")[0]
         u = clean_olhar_url(u)
-        u = normalize_url(u)
 
         if not good_url(u):
             continue
         if not same_domain(source_url, u):
             continue
-        if not looks_like_article(source_url, u):
-            continue
 
         links.append(u)
 
-    # dedupe preservando ordem
     seen, out = set(), []
     for u in links:
         if u not in seen:
@@ -332,7 +364,6 @@ def get_title_text_time_source(url: str):
     for tag in soup(["script", "style", "noscript"]):
         tag.decompose()
 
-    # title
     title = ""
     og = soup.find("meta", property="og:title")
     if og and og.get("content"):
@@ -344,16 +375,13 @@ def get_title_text_time_source(url: str):
     if not title and soup.title:
         title = soup.title.get_text(" ", strip=True)
 
-    # text
     article = soup.find("article")
     text = article.get_text(" ", strip=True) if article else soup.get_text(" ", strip=True)
     text = re.sub(r"\s+", " ", text).strip()
 
-    # hora (quando existir)
     m = re.search(r"\b([01]\d|2[0-3])[:h]([0-5]\d)\b", text)
     hhmm = f"{m.group(1)}:{m.group(2)}" if m else None
 
-    # fonte display
     netloc = urlparse(url).netloc.lower()
     fonte = netloc
     if "g1.globo.com" in netloc:
@@ -374,32 +402,23 @@ def get_title_text_time_source(url: str):
         fonte = "Olhar Direto"
     elif "olharjuridico.com.br" in netloc:
         fonte = "Olhar Jurídico"
-    elif "olharconceito.com.br" in netloc:
-        fonte = "Olhar Conceito"
     elif "conjur.com.br" in netloc:
         fonte = "ConJur"
-    elif "cpanoticias.com" in netloc:
-        fonte = "CPA Notícias"
     elif "portaldacidade.com" in netloc:
         fonte = "Portal da Cidade"
-    elif "cnj.jus.br" in netloc:
-        fonte = "CNJ"
+    elif "cpanoticias.com" in netloc:
+        fonte = "CPA Notícias"
 
     return (title[:220].strip(), text, hhmm, fonte)
 
-def fmt_item(title: str, hhmm: str | None, fonte: str, url: str, numbered=False, n=1) -> str:
+def fmt_item(title: str, hhmm: str | None, fonte: str, url: str, n: int) -> str:
     safe_title = html.escape(title.strip())
     safe_url = html.escape(url)
-
     if hhmm:
         head = f"{hhmm} - {safe_title} ({html.escape(fonte)})"
     else:
         head = f"{safe_title} ({html.escape(fonte)})"
-
-    if numbered:
-        return f"{n}) {head}\n    {safe_url}\n"
-    else:
-        return f"- {head}\n  {safe_url}\n"
+    return f"{n}) {head}\n    {safe_url}\n"
 
 # ======================
 # MAIN
@@ -409,13 +428,11 @@ def main():
     agora = datetime.now().strftime("%d/%m/%Y %H:%M")
 
     relevantes = []
-    outras = []
     analyzed = 0
 
     for src in SOURCES:
         if DEBUG:
             print("\n=== FONTE:", src)
-
         try:
             links = extract_links(src)
             if DEBUG:
@@ -428,9 +445,9 @@ def main():
         for link in links:
             if analyzed >= MAX_PAGINAS_ANALISADAS:
                 break
-
-            link = normalize_url(link)
             if link in hist:
+                continue
+            if not good_url(link):
                 continue
 
             analyzed += 1
@@ -447,45 +464,29 @@ def main():
             if not title or len(text) < 200:
                 continue
 
-            # >>> SOMENTE JUSTIÇA DO TRABALHO <<<
-            if not is_justica_do_trabalho(title, text, link):
+            # >>> SOMENTE SEUS TERMOS + JT <<<
+            if not is_target_article(title, text):
                 continue
 
-            if is_relevante_trt23(title, text, link):
-                relevantes.append((title, hhmm, fonte, link))
-            else:
-                outras.append((title, hhmm, fonte, link))
-
+            relevantes.append((title, hhmm, fonte, link))
             hist.add(link)
 
-            if len(relevantes) >= MAX_RELEVANTES and (not SHOW_OUTRAS or len(outras) >= MAX_OUTRAS):
+            if len(relevantes) >= MAX_RELEVANTES:
                 break
 
     save_hist(hist)
 
-    # ======================
-    # MENSAGEM NO FORMATO PEDIDO
-    # ======================
     msg = []
     msg.append(f"📅 {agora}")
-    msg.append("⚖️ <b>NOTICIAS RELEVANTES PARA O TRT23</b>")
+    msg.append("⚖️ NOTICIAS RELEVANTES PARA O TRT23")
     msg.append("")
+    msg.append("RELEVANTES TRT23:")
 
-    msg.append("<b>RELEVANTES TRT23:</b>")
     if relevantes:
         for i, (title, hhmm, fonte, link) in enumerate(relevantes[:MAX_RELEVANTES], start=1):
-            msg.append(fmt_item(title, hhmm, fonte, link, numbered=True, n=i).rstrip())
+            msg.append(fmt_item(title, hhmm, fonte, link, n=i).rstrip())
     else:
-        msg.append("(nenhuma notícia de Justiça do Trabalho relevante para o TRT23 encontrada)")
-
-    if SHOW_OUTRAS:
-        msg.append("")
-        msg.append("<b>OUTRAS (AINDA JT):</b>")
-        if outras:
-            for (title, hhmm, fonte, link) in outras[:MAX_OUTRAS]:
-                msg.append(fmt_item(title, hhmm, fonte, link, numbered=False).rstrip())
-        else:
-            msg.append("(nenhuma)")
+        msg.append("(nenhuma notícia com termos de processo trabalhista encontrada nas fontes hoje)")
 
     full = "\n".join(msg).strip()
 
