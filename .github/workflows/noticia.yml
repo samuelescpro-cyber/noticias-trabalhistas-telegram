@@ -1,27 +1,35 @@
-name: Telegram Notícias Trabalhistas
+name: Noticias JT - TRT23 (06:00)
 
 on:
+  schedule:
+    - cron: "0 10 * * *"   # 06:00 America/Cuiaba (UTC-4) = 10:00 UTC
   workflow_dispatch:
 
 jobs:
   run-bot:
     runs-on: ubuntu-latest
-
     steps:
-      - uses: actions/checkout@v4
+      - name: Checkout
+        uses: actions/checkout@v4
 
-      - uses: actions/setup-python@v5
+      - name: Setup Python
+        uses: actions/setup-python@v5
         with:
-          python-version: '3.10'
+          python-version: "3.11"
 
-      - name: Instalar dependências
+      - name: Install dependencies
         run: |
-          pip install requests beautifulsoup4
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
 
-      - name: Rodar bot
+      - name: Run bot
         env:
           TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
           TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+          DEBUG: "0"
+          STRICT_JT: "1"
+          MAX_RELEVANTES: "12"
+          MAX_PAGINAS_ANALISADAS: "220"
+          MAX_LINKS_POR_FONTE: "40"
+          SLEEP: "0.25"
         run: python main.py
-
-
