@@ -2,34 +2,25 @@ name: Noticias JT - TRT23 (06:00)
 
 on:
   schedule:
-    - cron: "0 10 * * *"   # 06:00 America/Cuiaba (UTC-4) = 10:00 UTC
+    - cron: "0 10 * * *"   # 06:00 America/Cuiaba (UTC-4)
   workflow_dispatch:
 
 jobs:
-  run-bot:
+  run:
     runs-on: ubuntu-latest
+    env:
+      TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
+      TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
+      DEBUG: "0"
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
+      - uses: actions/checkout@v4
 
-      - name: Setup Python
-        uses: actions/setup-python@v5
+      - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
 
-      - name: Install dependencies
-        run: |
-          python -m pip install --upgrade pip
-          pip install -r requirements.txt
+      - name: Install
+        run: pip install -r requirements.txt
 
-      - name: Run bot
-        env:
-          TELEGRAM_TOKEN: ${{ secrets.TELEGRAM_TOKEN }}
-          TELEGRAM_CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
-          DEBUG: "0"
-          STRICT_JT: "1"
-          MAX_RELEVANTES: "12"
-          MAX_PAGINAS_ANALISADAS: "220"
-          MAX_LINKS_POR_FONTE: "40"
-          SLEEP: "0.25"
+      - name: Run
         run: python main.py
