@@ -6,6 +6,7 @@ import html
 import unicodedata
 import requests
 from datetime import datetime
+from zoneinfo import ZoneInfo
 from urllib.parse import urljoin, urlparse, parse_qs, urlencode, urlunparse
 
 from bs4 import BeautifulSoup
@@ -35,7 +36,7 @@ if not TELEGRAM_TOKEN or not TELEGRAM_CHAT_ID:
     raise SystemExit("ERRO: Defina TELEGRAM_TOKEN e TELEGRAM_CHAT_ID no ambiente.")
 
 HEADERS = {
-    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) TelegramNewsBot/1.0",
+    "User-Agent": "Mozilla/5.0 (X11; Linux x86_64) TelegramNewsBot/1.0",
     "Accept-Language": "pt-BR,pt;q=0.9,en;q=0.8",
 }
 
@@ -49,13 +50,10 @@ SOURCES = [
 
     # Portais (só entra se bater keywords)
     "https://g1.globo.com/mt/mato-grosso/",
-    "https://www.olhardireto.com.br/",
     "https://www.olhardireto.com.br/juridico/",
-    "https://www.reportermt.com/",
     "https://www.reportermt.com/ultimas-noticias",
     "https://www.gazetadigital.com.br/editorias/judiciario/",
     "https://www.folhamax.com/",
-    "https://www.folhamax.com/cidades/",
     "https://www.tjmt.jus.br/noticias",
     "https://www.estadaomatogrosso.com.br",
 
@@ -95,6 +93,9 @@ BLOCKED_PATH_SNIPPETS = [
     "/contato", "/fale-conosco", "/expediente", "/sobre",
     "/institucional", "/quem-somos",
 
+    # corta cursos/concursos
+    "cursos-e-concursos", "curso", "concursos", "concurso",
+
     # TRT23 (menus/páginas institucionais que o crawler pega muito)
     "/portal/menulistchildren/",
     "/portal/o-trt",
@@ -115,29 +116,33 @@ BLOCKED_PATH_SNIPPETS = [
 ]
 
 # ======================
-# FILTRO: Justiça do Trabalho (base)
+# FILTRO: Justiça do Trabalho (contexto)
 # ======================
-JT_STRONG = [
+JT_CONTEXT = [
     "justiça do trabalho", "justica do trabalho",
-    "trt", "trt-23", "trt23", "trtmt",
+    "trabalh",  # trabalhista, trabalhador etc.
+    "trt", "trt23", "trt-23", "trtmt",
+    "tst", "clt",
     "vara do trabalho", "varas do trabalho",
-    "tst",
-    "mpt", "ministério público do trabalho", "ministerio publico do trabalho",
-    "clt",
-    "dissídio", "dissidio",
+    "mpt", "ministerio publico do trabalho", "ministério público do trabalho",
 ]
 
-JT_WEAK = [
-    "trabalh",  # trabalhista/trabalhador etc.
-    "sindicato", "greve",
-]
+def norm(s: str) -> str:
+    s = s or ""
+    s = unicodedata.normalize("NFKD", s)
+    s = "".join(ch for ch in s if not unicodedata.combining(ch))
+    return s.lower()
+
+def has_jt_context(title: str, text: str) -> bool:
+    t = norm(title + " " + text)
+    return any(norm(k) in t for k in JT_CONTEXT)
 
 # ======================
-# FILTRO: somente SEUS TERMOS (processo/decisão)
-# (normalizado: sem acento + lowercase)
+# FILTRO: suas keywords (mais preciso)
+# - frases específicas passam
+# - termos soltos só passam com contexto JT
 # ======================
-KEY_PHRASES = [
-    # exatamente do jeito que você pediu (com variações para plural/singular)
+KEY_STRICT_PHRASES = [
     "processo trabalhista", "processos trabalhistas",
     "acao trabalhista", "acoes trabalhistas",
     "ação trabalhista", "ações trabalhistas",
@@ -151,126 +156,59 @@ KEY_PHRASES = [
     "condenação trabalhista", "condenações trabalhistas",
     "indenizacao trabalhista", "indenizacoes trabalhistas",
     "indenização trabalhista", "indenizações trabalhistas",
-    "dano moral trabalhista", "danos morais trabalhistas",
+    "danos morais trabalhistas", "dano moral trabalhista",
+    "acordo em processo trabalhista", "acordos em processos trabalhistas",
+    "cumprimento de sentenca", "cumprimento de sentença",
+    "cumprimento de sentencas", "cumprimento de sentenças",
+    "execucao de processo trabalhista", "execução de processo trabalhista",
+    "execucoes de processos trabalhistas", "execuções de processos trabalhistas",
+    "penhoras de empresas", "penhora de empresa",
+    "bloqueios de bens", "bloqueio de bens",
+    "audiencia trabalhista", "audiência trabalhista",
+    "audiencias trabalhistas", "audiências trabalhistas",
+    "embargos trabalhistas", "embargo trabalhista",
+    "inquerito trabalhista", "inquérito trabalhista",
+    "inqueritos trabalhistas", "inquéritos trabalhistas",
+]
+
+# termos soltos: só valem se houver contexto JT também
+KEY_SINGLE_TERMS = [
     "liminar", "tutela",
     "acordao", "acórdão", "acordaos", "acórdãos",
     "recurso", "recursos",
     "agravo", "agravos",
-    "embargos trabalhistas", "embargo trabalhista",
-    "audiencia trabalhista", "audiencias trabalhistas",
-    "audiência trabalhista", "audiências trabalhistas",
-    "execucao de processo trabalhista", "execucoes de processos trabalhistas",
-    "execução de processo trabalhista", "execuções de processos trabalhistas",
-    "penhora de empresa", "penhoras de empresas",
-    "bloqueio de bens", "bloqueios de bens",
-    "acordo em processo trabalhista", "acordos em processos trabalhistas",
-    "homologacao", "homologacoes", "homologação", "homologações",
-    "cumprimento de sentenca", "cumprimento de sentencas",
-    "cumprimento de sentença", "cumprimento de sentenças",
-    "inquerito trabalhista", "inqueritos trabalhistas",
-    "inquérito trabalhista", "inquéritos trabalhistas",
-    "processo", "processos ",
-    "acao", "acoes",
-    "ação", "ações",
-    "reclamacao", "reclamacoes",
-    "reclamação", "reclamações",
-    "decisao", "decisoes",
-    "decisão", "decisões",
-    "sentenca", "sentencas",
-    "sentença", "sentenças",
-    "condenacao", "condenacoes",
-    "condenação", "condenações",
-    "indenizacao", "indenizacoes",
-    "indenização", "indenizações",
-    "embargos ", "embargo",
-    "audiencia", "audiencias",
-    "audiência", "audiências",
-    "execucao de processo", "execucoes de processos",
-    "execução de processo", "execuções de processos",
-    "cumprimento de sentenca trabalhista", "cumprimento de sentencas trabalhista",
-    "cumprimento de sentença trabalhista", "cumprimento de sentenças trabalhista",
-    "cumprimento de sentencas trabalhistas", "cumprimento de sentencas trabalhistas",
-    "cumprimento de sentenças trabalhistas", "cumprimento de sentenças trabalhista",
+    "homologacao", "homologação", "homologacoes", "homologações",
 ]
-
-def norm(s: str) -> str:
-    s = s or ""
-    s = unicodedata.normalize("NFKD", s)
-    s = "".join(ch for ch in s if not unicodedata.combining(ch))
-    return s.lower()
-
-def jt_score(title: str, text: str) -> int:
-    t = norm(title + " " + text)
-    score = 0
-    for k in JT_STRONG:
-        if norm(k) in t:
-            score += 2
-    for k in JT_WEAK:
-        if norm(k) in t:
-            score += 1
-    return score
 
 def has_required_keywords(title: str, text: str) -> bool:
     t = norm(title + " " + text)
-    for ph in KEY_PHRASES:
+
+    # 1) frases específicas
+    for ph in KEY_STRICT_PHRASES:
         if norm(ph) in t:
             return True
+
+    # 2) termos soltos só com contexto JT
+    if not has_jt_context(title, text):
+        return False
+
+    for w in KEY_SINGLE_TERMS:
+        if norm(w) in t:
+            return True
+
     return False
 
 def is_target_article(title: str, text: str) -> bool:
-    # 1) tem que bater keyword exata da sua lista
     if not has_required_keywords(title, text):
         return False
-    # 2) ainda exige cheiro de Justiça do Trabalho
-    js = jt_score(title, text)
+    # endurece: exige contexto JT
     if STRICT_JT:
-        return js >= 2
-    return js >= 1
+        return has_jt_context(title, text)
+    return True
 
 # ======================
-# UTILIDADES
+# UTILIDADES: bloqueio + "cara de matéria"
 # ======================
-def load_hist():
-    if os.path.exists(HIST_FILE):
-        try:
-            with open(HIST_FILE, "r", encoding="utf-8") as f:
-                data = json.load(f)
-                return set(data if isinstance(data, list) else [])
-        except Exception:
-            return set()
-    return set()
-
-def save_hist(hist: set):
-    with open(HIST_FILE, "w", encoding="utf-8") as f:
-        json.dump(sorted(list(hist)), f, ensure_ascii=False, indent=2)
-
-def telegram_send(text: str):
-    url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
-    r = requests.post(
-        url,
-        json={
-            "chat_id": TELEGRAM_CHAT_ID,
-            "text": text,
-            "parse_mode": "HTML",
-            "disable_web_page_preview": True,
-        },
-        timeout=TIMEOUT,
-    )
-    if DEBUG:
-        print("TELEGRAM:", r.status_code, r.text[:180])
-    r.raise_for_status()
-
-def chunk_telegram(msg: str, limit=3800):
-    parts, buf = [], ""
-    for line in msg.splitlines(True):
-        if len(buf) + len(line) > limit:
-            parts.append(buf)
-            buf = ""
-        buf += line
-    if buf.strip():
-        parts.append(buf)
-    return parts
-
 def is_blocked_url(u: str) -> bool:
     try:
         p = urlparse(u)
@@ -291,6 +229,50 @@ def is_blocked_url(u: str) -> bool:
 
     return False
 
+def looks_like_article_url(u: str) -> bool:
+    """
+    Mata páginas índice/categoria (igual as que apareceram no seu print).
+    Regras por domínio (simples e eficientes).
+    """
+    p = urlparse(u)
+    netloc = (p.netloc or "").lower()
+    path = (p.path or "").lower()
+    query = (p.query or "").lower()
+
+    # TRT23: matéria costuma estar em /portal/noticias/<slug>
+    if "portal.trt23.jus.br" in netloc:
+        return "/portal/noticias/" in path and not path.rstrip("/").endswith("/portal/noticias")
+
+    # G1: notícia é /noticia/... .ghtml
+    if "g1.globo.com" in netloc:
+        return ("/noticia/" in path) and path.endswith(".ghtml")
+
+    # Olhar (jurídico): notícia é exibir.asp?id=...&noticia=...
+    if "olhardireto.com.br" in netloc:
+        if "exibir.asp" in path and "id=" in query:
+            return True
+        return False  # corta /juridico/noticias/ e index.asp?id=...
+
+    # RepórterMT: geralmente termina com /<id>
+    if "reportermt.com" in netloc:
+        return bool(re.search(r"/\d{3,}$", path))
+
+    # Gazeta Digital: matérias costumam terminar com /<id>
+    if "gazetadigital.com.br" in netloc:
+        return bool(re.search(r"/\d{3,}$", path))
+
+    # FolhaMax: termina com /<id>
+    if "folhamax.com" in netloc:
+        return bool(re.search(r"/\d{3,}$", path))
+
+    # TJMT / Estadão MT / ConJur / Portal da Cidade / CPA: não dá pra padronizar 100%,
+    # então só corta óbvias "home/índice"
+    if path in ("/", ""):
+        return False
+    if path.endswith("/noticias/") or path.endswith("/noticias"):
+        return False
+    return True
+
 def good_url(u: str) -> bool:
     if is_blocked_url(u):
         return False
@@ -310,7 +292,7 @@ def same_domain(base, u) -> bool:
     return (n == b) or n.endswith("." + b)
 
 def clean_olhar_url(u: str) -> str:
-    if "olhardireto.com.br" not in u and "olharjuridico.com.br" not in u and "olharconceito.com.br" not in u:
+    if "olhardireto.com.br" not in u:
         return u
 
     u = u.replace("¬", "")
@@ -345,6 +327,8 @@ def extract_links(source_url: str):
         if not good_url(u):
             continue
         if not same_domain(source_url, u):
+            continue
+        if not looks_like_article_url(u):
             continue
 
         links.append(u)
@@ -400,8 +384,6 @@ def get_title_text_time_source(url: str):
         fonte = "Estadão Mato Grosso"
     elif "olhardireto.com.br" in netloc:
         fonte = "Olhar Direto"
-    elif "olharjuridico.com.br" in netloc:
-        fonte = "Olhar Jurídico"
     elif "conjur.com.br" in netloc:
         fonte = "ConJur"
     elif "portaldacidade.com" in netloc:
@@ -420,12 +402,53 @@ def fmt_item(title: str, hhmm: str | None, fonte: str, url: str, n: int) -> str:
         head = f"{safe_title} ({html.escape(fonte)})"
     return f"{n}) {head}\n    {safe_url}\n"
 
+def load_hist():
+    if os.path.exists(HIST_FILE):
+        try:
+            with open(HIST_FILE, "r", encoding="utf-8") as f:
+                data = json.load(f)
+                return set(data if isinstance(data, list) else [])
+        except Exception:
+            return set()
+    return set()
+
+def save_hist(hist: set):
+    with open(HIST_FILE, "w", encoding="utf-8") as f:
+        json.dump(sorted(list(hist)), f, ensure_ascii=False, indent=2)
+
+def telegram_send(text: str):
+    url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
+    r = requests.post(
+        url,
+        json={
+            "chat_id": TELEGRAM_CHAT_ID,
+            "text": text,
+            "parse_mode": "HTML",
+            "disable_web_page_preview": True,
+        },
+        timeout=TIMEOUT,
+    )
+    if DEBUG:
+        print("TELEGRAM:", r.status_code, r.text[:180])
+    r.raise_for_status()
+
+def chunk_telegram(msg: str, limit=3800):
+    parts, buf = [], ""
+    for line in msg.splitlines(True):
+        if len(buf) + len(line) > limit:
+            parts.append(buf)
+            buf = ""
+        buf += line
+    if buf.strip():
+        parts.append(buf)
+    return parts
+
 # ======================
 # MAIN
 # ======================
 def main():
     hist = load_hist()
-    agora = datetime.now().strftime("%d/%m/%Y %H:%M")
+    agora = datetime.now(ZoneInfo("America/Cuiaba")).strftime("%d/%m/%Y %H:%M")
 
     relevantes = []
     analyzed = 0
@@ -461,10 +484,11 @@ def main():
                     print("Falha ao abrir:", link, e)
                 continue
 
-            if not title or len(text) < 200:
+            # evita lixo
+            if not title or len(text) < 300:
                 continue
 
-            # >>> SOMENTE SEUS TERMOS + JT <<<
+            # >>> SOMENTE SUAS KEYWORDS + CONTEXTO JT <<<
             if not is_target_article(title, text):
                 continue
 
@@ -486,7 +510,7 @@ def main():
         for i, (title, hhmm, fonte, link) in enumerate(relevantes[:MAX_RELEVANTES], start=1):
             msg.append(fmt_item(title, hhmm, fonte, link, n=i).rstrip())
     else:
-        msg.append("(nenhuma notícia com termos de processo trabalhista encontrada nas fontes hoje)")
+        msg.append("(nenhuma notícia encontrada com seus termos de processo/decisão trabalhista)")
 
     full = "\n".join(msg).strip()
 
@@ -499,5 +523,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
-
