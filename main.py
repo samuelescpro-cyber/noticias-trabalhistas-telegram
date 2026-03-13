@@ -20,58 +20,56 @@ TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID", "").strip()
 
 HIST_FILE = "enviadas.json"
 
-TIMEOUT = (7, 20)  # (conexão, leitura)
+TIMEOUT = (7, 20)
 SLEEP = float(os.getenv("SLEEP", "0.25"))
 
-MAX_LINKS_POR_FONTE = int(os.getenv("MAX_LINKS_POR_FONTE", "60"))
-MAX_PAGINAS_ANALISADAS = int(os.getenv("MAX_PAGINAS_ANALISADAS", "260"))
-MAX_RELEVANTES = int(os.getenv("MAX_RELEVANTES", "12"))
-
-# mais rígido
-STRICT_JT = os.getenv("STRICT_JT", "1") == "1"
+MAX_LINKS_POR_FONTE = int(os.getenv("MAX_LINKS_POR_FONTE", "80"))
+MAX_PAGINAS_ANALISADAS = int(os.getenv("MAX_PAGINAS_ANALISADAS", "400"))
+MAX_RELEVANTES_MT = int(os.getenv("MAX_RELEVANTES_MT", "15"))
+MAX_RELEVANTES_BR = int(os.getenv("MAX_RELEVANTES_BR", "15"))
 
 if not TELEGRAM_TOKEN or not TELEGRAM_CHAT_ID:
     raise SystemExit("ERRO: Defina TELEGRAM_TOKEN e TELEGRAM_CHAT_ID no ambiente.")
 
 HEADERS = {
-    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) TelegramNewsBot/1.0",
+    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) TelegramNewsBot/2.0",
     "Accept-Language": "pt-BR,pt;q=0.9,en;q=0.8",
 }
 
 # ======================
-# FONTES (sem CNJ)
+# FONTES
 # ======================
-SOURCES = [
-    # TRT23
-    "https://portal.trt23.jus.br/portal/noticias",
-    "https://portal.trt23.jus.br/portal/noticias?page=1",
 
-    # Portais (só entra se bater keywords + JT)
+SOURCES_MT = [
     "https://g1.globo.com/mt/mato-grosso/",
-    "https://www.olhardireto.com.br/juridico/",
-    "https://www.reportermt.com/ultimas-noticias",
-    "https://www.gazetadigital.com.br/editorias/judiciario/",
+    "https://www.olhardireto.com.br/",
+    "https://www.reportermt.com/",
+    "https://www.gazetadigital.com.br/",
     "https://www.folhamax.com/",
-    "https://lucasdorioverde.portaldacidade.com/",
-    "https://www.conjur.com.br/",
     "https://cpanoticias.com/",
+    "https://portal.trt23.jus.br/portal/noticias",
+]
+
+SOURCES_BR = [
+    "https://g1.globo.com/",
+    "https://www.conjur.com.br/",
+    "https://www.poder360.com.br/",
+    "https://agenciabrasil.ebc.com.br/",
+    "https://valor.globo.com/",
+    "https://www.cnnbrasil.com.br/",
+    "https://www.estadao.com.br/",
 ]
 
 # ======================
-# BLOQUEIOS (agressivo)
+# BLOQUEIOS
 # ======================
 BLOCKED_DOMAINS = {
     "globoplay.globo.com",
     "ge.globo.com",
     "gshow.globo.com",
-    "valor.globo.com",
-    "oglobo.globo.com",
-    "extra.globo.com",
-    "cnj.jus.br",
 }
 
 BLOCKED_PATH_SNIPPETS = [
-    # mídia / landing
     "/live/", "/ao-vivo/", "/aovivo/",
     "/videos/", "/video/", "/player/",
     "/podcasts/", "/podcast/",
@@ -86,123 +84,77 @@ BLOCKED_PATH_SNIPPETS = [
     "/termos", "/terms",
     "/contato", "/fale-conosco", "/expediente", "/sobre",
     "/institucional", "/quem-somos",
-
-    # corta cursos/concursos (você pediu)
-    "/cursos", "/concursos", "cursos-e-concursos",
-
-    # TRT23 menus/páginas institucionais
-    "/portal/menulistchildren/",
-    "/portal/o-trt",
-    "/portal/composicao-do-trt",
-    "/portal/corregedoria",
-    "/portal/ejud",
-    "/portal/foros-trabalhistas",
-    "/portal/gestao-estrategica",
-    "/portal/juizes-do-trabalho",
-    "/portal/memorial",
-    "/portal/pontos-de-inclusao-digital",
-    "/portal/programas-acoes-e-projetos",
-    "/portal/sustentabilidade",
-    "/portal/varas-do-trabalho",
-    "/portal/servicos",
-    "/portal/biblioteca",
-    "/portal/reports/",
 ]
 
 # ======================
-# FILTRO: Justiça do Trabalho (base)
+# CATEGORIAS / PALAVRAS-CHAVE
 # ======================
-JT_STRONG = [
-    "justiça do trabalho", "justica do trabalho",
-    "trt", "trt-23", "trt23", "trtmt",
-    "vara do trabalho", "varas do trabalho",
-    "tst",
-    "mpt", "ministério público do trabalho", "ministerio publico do trabalho",
-    "clt",
-    "dissídio", "dissidio",
+CATEGORY_KEYWORDS = {
+    "Trabalhista": [
+        "trabalho", "trabalhista", "justica do trabalho", "justiça do trabalho",
+        "trt", "tst", "vara do trabalho", "clt", "mpt", "greve", "sindicato",
+        "empregado", "empregador", "verbas rescisorias", "verbas rescisórias",
+        "fgts", "horas extras", "assedio eleitoral", "assédio eleitoral",
+        "insalubridade", "periculosidade"
+    ],
+    "Jurídica": [
+        "justica", "justiça", "judiciario", "judiciário", "tribunal", "juiz",
+        "juiza", "juíza", "desembargador", "desembargadora", "stf", "stj",
+        "cnj", "processo", "acao", "ação", "sentenca", "sentença", "acordao",
+        "acórdão", "liminar", "recurso", "decisao", "decisão", "advogado"
+    ],
+    "Política": [
+        "politica", "política", "governo", "presidente", "governador", "prefeito",
+        "assembleia", "assembleia legislativa", "câmara", "camara", "senado",
+        "deputado", "deputada", "senador", "senadora", "eleicao", "eleição",
+        "eleitoral", "planalto", "ministro", "ministra"
+    ],
+    "Crime": [
+        "crime", "policia", "polícia", "prisao", "prisão", "preso", "presa",
+        "homicidio", "homicídio", "roubo", "furto", "trafico", "tráfico",
+        "operacao", "operação", "investigacao", "investigação", "delegado",
+        "delegacia", "violencia", "violência", "assassinato"
+    ],
+    "Economia": [
+        "economia", "mercado", "inflacao", "inflação", "juros", "selic", "ibge",
+        "emprego", "desemprego", "renda", "industria", "indústria", "comercio",
+        "comércio", "exportacao", "exportação", "importacao", "importação",
+        "orcamento", "orçamento", "fiscal", "receita", "arrecadacao", "arrecadação"
+    ],
+    "Agro": [
+        "agro", "agronegocio", "agronegócio", "safra", "soja", "milho", "algodao",
+        "algodão", "pecuaria", "pecuária", "gado", "boi", "frigorifico", "frigorífico",
+        "plantio", "colheita", "produtor rural", "agricultura"
+    ],
+    "Cultura": [
+        "cultura", "show", "festival", "cinema", "teatro", "musica", "música",
+        "livro", "literatura", "exposicao", "exposição", "artista", "arte",
+        "museu", "espetaculo", "espetáculo", "programacao cultural", "programação cultural"
+    ],
+}
+
+GENERIC_BLOCKS = [
+    "loteria", "horoscopo", "horóscopo", "bbb", "big brother", "fofoca",
+    "celebridades", "receita", "receitas", "moda", "beleza", "game", "games",
 ]
 
-JT_WEAK = [
-    "trabalh",  # trabalhista/trabalhador etc.
-    "sindicato", "greve",
+MT_TERMS = [
+    "mato grosso", "cuiaba", "cuiabá", "varzea grande", "várzea grande",
+    "rondonopolis", "rondonópolis", "sinop", "sorriso", "lucas do rio verde",
+    "primavera do leste", "tangara da serra", "tangará da serra",
+    "alta floresta", "barra do garcas", "barra do garças",
+    "caceres", "cáceres", "mt"
 ]
 
 # ======================
-# FILTRO: SOMENTE SUAS PALAVRAS-CHAVE (SEM genéricas)
+# UTILIDADES
 # ======================
-KEY_PHRASES = [
-    "processo trabalhista", "processos trabalhistas",
-    "acao trabalhista", "acoes trabalhistas",
-    "reclamacao trabalhista", "reclamacoes trabalhistas",
-    "decisao trabalhista", "decisoes trabalhistas",
-    "sentenca trabalhista", "sentencas trabalhistas",
-    "condenacao trabalhista", "condenacoes trabalhistas",
-    "indenizacao trabalhista", "indenizacoes trabalhistas",
-    "dano moral trabalhista", "danos morais trabalhistas",
-
-    "liminar", "tutela",
-    "acordao", "acordaos",
-    "recurso", "recursos",
-    "agravo", "agravos",
-    "embargos trabalhistas", "embargo trabalhista",
-    "audiencia trabalhista", "audiencias trabalhistas",
-    "execucao de processo trabalhista", "execucao de processos trabalhistas",
-    "penhora de empresa", "penhoras de empresas",
-    "bloqueio de bens", "bloqueios de bens",
-    "acordo em processo trabalhista", "acordos em processos trabalhistas",
-    "homologacao", "homologacoes",
-    "cumprimento de sentenca", "cumprimento de sentencas",
-    "inquerito trabalhista", "inqueritos trabalhistas",
-]
-
-LABOR_CONTEXT = [
-    "trt", "tst", "vara do trabalho", "justica do trabalho",
-    "clt", "reclamante", "reclamada", "empregado", "empregador",
-    "verbas rescisorias", "fgts", "horas extras", "rescisao",
-    "assedio", "insalubridade", "periculosidade", "vinculo empregaticio",
-]
-
 def norm(s: str) -> str:
     s = s or ""
     s = unicodedata.normalize("NFKD", s)
     s = "".join(ch for ch in s if not unicodedata.combining(ch))
     return s.lower()
 
-def jt_score(title: str, text: str) -> int:
-    t = norm(title + " " + text)
-    score = 0
-    for k in JT_STRONG:
-        if norm(k) in t:
-            score += 2
-    for k in JT_WEAK:
-        if norm(k) in t:
-            score += 1
-    return score
-
-def has_required_keywords(title: str, text: str) -> bool:
-    t = norm(title + " " + text)
-    return any(norm(ph) in t for ph in KEY_PHRASES)
-
-def has_labor_context(title: str, text: str) -> bool:
-    t = norm(title + " " + text)
-    return any(norm(k) in t for k in LABOR_CONTEXT)
-
-def is_target_article(title: str, text: str) -> bool:
-    # 1) tem que bater SUA lista
-    if not has_required_keywords(title, text):
-        return False
-    # 2) tem que ter contexto trabalhista
-    if not has_labor_context(title, text):
-        return False
-    # 3) JT score
-    js = jt_score(title, text)
-    if STRICT_JT:
-        return js >= 2
-    return js >= 1
-
-# ======================
-# UTILIDADES
-# ======================
 def load_hist():
     if os.path.exists(HIST_FILE):
         try:
@@ -230,7 +182,7 @@ def telegram_send(text: str):
         timeout=TIMEOUT,
     )
     if DEBUG:
-        print("TELEGRAM:", r.status_code, r.text[:180])
+        print("TELEGRAM:", r.status_code, r.text[:200])
     r.raise_for_status()
 
 def chunk_telegram(msg: str, limit=3800):
@@ -270,37 +222,23 @@ def is_listing_url(u: str) -> bool:
     path = (p.path or "").lower()
     qs = parse_qs(p.query or "")
 
-    # G1: só aceita notícia .ghtml
     if "g1.globo.com" in netloc:
         return not path.endswith(".ghtml")
 
-    # Olhar Jurídico: bloqueia listagens/categorias
     if "olhardireto.com.br" in netloc:
-        if path.rstrip("/") == "/juridico/noticias":
+        if path.rstrip("/") in ("", "/", "/juridico/noticias"):
             return True
-        # index.asp com editoria = categoria
         if path.endswith("/juridico/noticias/index.asp") and "editoria" in qs and "noticia" not in qs:
             return True
-        # página raiz de editorias
-        if path.rstrip("/").endswith("/juridico/noticias"):
-            return True
 
-    # Gazeta: editorias (home de editoria)
     if "gazetadigital.com.br" in netloc:
         if "/editorias/" in path and path.rstrip("/").count("/") <= 3:
             return True
 
-    # Portal da Cidade: home e listagens comuns
-    if "portaldacidade.com" in netloc:
-        if path.rstrip("/") in ("", "/", "/noticias", "/noticias/"):
-            return True
-
-    # ConJur: home/índices
     if "conjur.com.br" in netloc:
         if path.rstrip("/") in ("", "/", "/rss", "/rss/"):
             return True
 
-    # CPA: home
     if "cpanoticias.com" in netloc:
         if path.rstrip("/") in ("", "/"):
             return True
@@ -321,7 +259,6 @@ def same_domain(base, u) -> bool:
     if not b or not n:
         return False
 
-    # G1: não deixa escapar pro Globoplay etc.
     if "g1.globo.com" in b:
         return "g1.globo.com" in n
 
@@ -331,12 +268,10 @@ def clean_olhar_url(u: str) -> str:
     if "olhardireto.com.br" not in u:
         return u
 
-    # remove caractere estranho “¬”
     u = u.replace("¬", "")
     parsed = urlparse(u)
     qs = parse_qs(parsed.query, keep_blank_values=True)
 
-    # normaliza 'icia' -> 'noticia'
     if "icia" in qs and "noticia" not in qs:
         qs["noticia"] = qs.pop("icia")
 
@@ -408,7 +343,7 @@ def get_title_text_time_source(url: str):
     netloc = urlparse(url).netloc.lower()
     fonte = netloc
     if "g1.globo.com" in netloc:
-        fonte = "G1 Mato Grosso"
+        fonte = "G1"
     elif "portal.trt23.jus.br" in netloc:
         fonte = "TRT23"
     elif "reportermt.com" in netloc:
@@ -421,36 +356,72 @@ def get_title_text_time_source(url: str):
         fonte = "Olhar Direto"
     elif "conjur.com.br" in netloc:
         fonte = "ConJur"
-    elif "portaldacidade.com" in netloc:
-        fonte = "Portal da Cidade"
     elif "cpanoticias.com" in netloc:
         fonte = "CPA Notícias"
+    elif "poder360.com.br" in netloc:
+        fonte = "Poder360"
+    elif "agenciabrasil.ebc.com.br" in netloc:
+        fonte = "Agência Brasil"
+    elif "valor.globo.com" in netloc:
+        fonte = "Valor"
+    elif "cnnbrasil.com.br" in netloc:
+        fonte = "CNN Brasil"
+    elif "estadao.com.br" in netloc:
+        fonte = "Estadão"
 
     return (title[:220].strip(), text, hhmm, fonte)
 
-def fmt_item(title: str, hhmm: str | None, fonte: str, url: str, n: int) -> str:
+def detect_category(title: str, text: str) -> str | None:
+    t = norm(title + " " + text)
+
+    best_cat = None
+    best_score = 0
+
+    for category, words in CATEGORY_KEYWORDS.items():
+        score = sum(1 for w in words if norm(w) in t)
+        if score > best_score:
+            best_score = score
+            best_cat = category
+
+    return best_cat if best_score >= 1 else None
+
+def is_mt_news(title: str, text: str, url: str, fonte: str) -> bool:
+    t = norm(title + " " + text + " " + url + " " + fonte)
+    return any(norm(term) in t for term in MT_TERMS)
+
+def is_good_article(title: str, text: str) -> bool:
+    t = norm(title + " " + text)
+
+    if not title or len(title.strip()) < 12:
+        return False
+
+    if len(text) < 250:
+        return False
+
+    if any(norm(b) in t for b in GENERIC_BLOCKS):
+        return False
+
+    return detect_category(title, text) is not None
+
+def fmt_item(title: str, hhmm: str | None, fonte: str, url: str, n: int, categoria: str) -> str:
     safe_title = htmlmod.escape(title.strip())
     safe_url = htmlmod.escape(url)
     safe_fonte = htmlmod.escape(fonte)
+    safe_cat = htmlmod.escape(categoria)
 
     if hhmm:
-        head = f"{hhmm} - {safe_title} ({safe_fonte})"
+        head = f"{hhmm} - {safe_title} ({safe_fonte} | {safe_cat})"
     else:
-        head = f"{safe_title} ({safe_fonte})"
+        head = f"{safe_title} ({safe_fonte} | {safe_cat})"
 
     return f"{n}) {head}\n    {safe_url}\n"
 
-# ======================
-# MAIN
-# ======================
-def main():
+def coletar_noticias(fontes, prioridade_mt: bool):
     hist = load_hist()
-    agora = datetime.now().strftime("%d/%m/%Y %H:%M")
-
     relevantes = []
     analyzed = 0
 
-    for src in SOURCES:
+    for src in fontes:
         if DEBUG:
             print("\n=== FONTE:", src)
 
@@ -472,8 +443,6 @@ def main():
                 continue
 
             analyzed += 1
-            if DEBUG:
-                print("GET:", link)
 
             try:
                 title, text, hhmm, fonte = get_title_text_time_source(link)
@@ -482,37 +451,59 @@ def main():
                     print("Falha ao abrir:", link, e)
                 continue
 
-            # texto muito curto geralmente é página ruim/listagem
-            if not title or len(text) < 250:
+            if not is_good_article(title, text):
                 continue
 
-            # >>> SOMENTE SUAS CHAVES + CONTEXTO TRABALHISTA <<<
-            if not is_target_article(title, text):
+            categoria = detect_category(title, text)
+            if not categoria:
                 continue
 
-            relevantes.append((title, hhmm, fonte, link))
+            eh_mt = is_mt_news(title, text, link, fonte)
+
+            if prioridade_mt and not eh_mt:
+                continue
+            if not prioridade_mt and eh_mt:
+                continue
+
+            relevantes.append((title, hhmm, fonte, link, categoria))
             hist.add(link)
 
-            if len(relevantes) >= MAX_RELEVANTES:
-                break
-
     save_hist(hist)
+    return relevantes
+
+# ======================
+# MAIN
+# ======================
+def main():
+    agora = datetime.now().strftime("%d/%m/%Y %H:%M")
+
+    noticias_mt = coletar_noticias(SOURCES_MT, prioridade_mt=True)[:MAX_RELEVANTES_MT]
+    noticias_br = coletar_noticias(SOURCES_BR, prioridade_mt=False)[:MAX_RELEVANTES_BR]
 
     msg = []
     msg.append(f"📅 {agora}")
-    msg.append("⚖️ NOTICIAS RELEVANTES PARA O TRT23")
+    msg.append("📰 RESUMO DIÁRIO DE NOTÍCIAS")
     msg.append("")
-    msg.append("RELEVANTES TRT23:")
 
-    if relevantes:
-        for i, (title, hhmm, fonte, link) in enumerate(relevantes[:MAX_RELEVANTES], start=1):
-            msg.append(fmt_item(title, hhmm, fonte, link, n=i).rstrip())
+    msg.append("📍 MATO GROSSO")
+    if noticias_mt:
+        for i, (title, hhmm, fonte, link, categoria) in enumerate(noticias_mt, start=1):
+            msg.append(fmt_item(title, hhmm, fonte, link, i, categoria).rstrip())
     else:
-        msg.append("(nenhuma notícia encontrada hoje com seus termos + contexto trabalhista)")
+        msg.append("(nenhuma notícia encontrada de Mato Grosso)")
+
+    msg.append("")
+    msg.append("🇧🇷 NACIONAL")
+    if noticias_br:
+        for i, (title, hhmm, fonte, link, categoria) in enumerate(noticias_br, start=1):
+            msg.append(fmt_item(title, hhmm, fonte, link, i, categoria).rstrip())
+    else:
+        msg.append("(nenhuma notícia nacional encontrada)")
 
     full = "\n".join(msg).strip()
 
     parts = chunk_telegram(full)
+
     if DEBUG:
         print("Enviando Telegram (partes):", len(parts))
 
